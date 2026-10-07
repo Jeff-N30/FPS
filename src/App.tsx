@@ -3,6 +3,9 @@ import { ALLOWED, CODES, MAX, PLAYERS, TEAMS, type Player } from "./data";
 import TacticalNavModule from "./components/TacticalNavModule";
 import CodeKeypad, { CODE_LEN } from "./components/CodeKeypad";
 import RadioControls from "./components/RadioControls";
+import AdminPanel from "./components/AdminPanel";
+import LogoutConfirm from "./components/LogoutConfirm";
+import { MODES, useSettings, type RosterVis } from "./settings";
 
 type Msg = { u: string; m: string; s?: boolean };
 type Chan = "team" | "global";
@@ -26,7 +29,7 @@ function Login({ onLogin }: { onLogin: (n: string) => void }) {
   const [err, setErr] = useState("");
   const go = () => {
     const n = v.trim().toUpperCase();
-    if (ALLOWED.includes(n)) onLogin(n);
+    if (ALLOWED.includes(n) || n === "ADMIN") onLogin(n);
     else setErr("Callsign not on roster.");
   };
   return (
@@ -99,25 +102,29 @@ function HealthCard({ me }: { me: Player }) {
 function PlayerList({
   me,
   players,
+  vis,
   silent,
   onToggleSilent,
   talking,
 }: {
   me: Player;
   players: Player[];
+  vis: RosterVis;
   silent: boolean;
   onToggleSilent: () => void;
   talking?: string;
 }) {
   const others = players
     .filter((p) => p.n !== me.n)
+    .filter((p) => vis === "all" || (vis === "team" && p.t === me.t))
     .sort((a, b) => Number(a.t !== me.t) - Number(b.t !== me.t));
+  const tag = vis === "none" ? "RESTRICTED" : vis === "team" ? "SQUAD ONLY" : "6 ONLINE";
   return (
     <section className={`panel panel-roster ${silent ? "silent-on" : ""}`}>
       <div className="panel-hd roster-hd">
         <div>
           <div className="lbl">Roster</div>
-          <div className="mini-tag mono">6 ONLINE</div>
+          <div className="mini-tag mono">{tag}</div>
         </div>
         <button
           type="button"
@@ -137,19 +144,26 @@ function PlayerList({
           <span className="mono">{silent ? "MUTED" : "MUTE"}</span>
         </button>
       </div>
-      {others.map((p) => (
-        <div className="row" key={p.n}>
-          <i className="sw" style={{ background: TEAMS[p.t] }} />
-          <span className="nm mono">
-            {p.n}
-            {!silent && talking === p.n && <span className="talk" />}
-          </span>
-          <div className="bar slim">
-            <i style={{ width: `${(p.hp / MAX) * 100}%`, background: col(p.hp) }} />
-          </div>
-          <span className="mono hpv">{p.hp}</span>
+      {vis === "none" ? (
+        <div className="rx-muted mono">
+          <b>ROSTER RESTRICTED</b>
+          <span>INTEL DISABLED BY COMMAND</span>
         </div>
-      ))}
+      ) : (
+        others.map((p) => (
+          <div className={`row ${p.hp === 0 ? "dead" : ""}`} key={p.n}>
+            <i className="sw" style={{ background: TEAMS[p.t] }} />
+            <span className="nm mono">
+              {p.n}
+              {!silent && p.hp > 0 && talking === p.n && <span className="talk" />}
+            </span>
+            <div className="bar slim">
+              <i style={{ width: `${(p.hp / MAX) * 100}%`, background: col(p.hp) }} />
+            </div>
+            <span className="mono hpv">{p.hp === 0 ? "KIA" : p.hp}</span>
+          </div>
+        ))
+      )}
     </section>
   );
 }
@@ -306,8 +320,33 @@ export default function App() {
 
   const [silentAt, setSilentAt] = useState<Record<Chan, number> | null>(null);
 
+  const [settings, setSettings] = useSettings();
+  const [confirmOut, setConfirmOut] = useState(false);
+
   if (!meName) return <Login onLogin={setMeName} />;
+
+  const logoutModal = confirmOut ? (
+    <LogoutConfirm
+      who={meName}
+      onCancel={() => setConfirmOut(false)}
+      onConfirm={() => {
+        setConfirmOut(false);
+        setMeName(null);
+      }}
+    />
+  ) : null;
+
+  if (meName === "ADMIN") {
+    return (
+      <>
+        <AdminPanel settings={settings} onChange={setSettings} onLogout={() => setConfirmOut(true)} />
+        {logoutModal}
+      </>
+    );
+  }
+
   const me = players.find((p) => p.n === meName)!;
+  const modeLabel = MODES.find((m) => m.id === settings.mode)?.label ?? "";
 
   const toggleSilent = () => setSilentAt((s) => (s ? null : { team: chat.team.length, global: chat.global.length }));
 
@@ -326,15 +365,21 @@ export default function App() {
   };
 
   return (
+    <>
     <div id="app" role="application" aria-label="tactical ui">
       <header className="top">
         <div className="mission">
-          <div className="tag mono">CLASSIFIED OP</div>
+          <div className="tag mono">CLASSIFIED OP · {modeLabel}</div>
           <h1>OPERATION DUSTLINE</h1>
           <div className="meta mono">SECTOR B-12 · LAT 31.5708 N · LON 35.2034 E</div>
         </div>
         <div className="status-block">
           <span className="pill mono"><span className="dot" />LIVE</span>
+          <button type="button" className="tac exit" title="Log out" aria-label="log out" onClick={() => setConfirmOut(true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42A6.92 6.92 0 0 1 19 12c0 3.87-3.13 7-7 7A6.995 6.995 0 0 1 7.58 6.58L6.17 5.17A8.932 8.932 0 0 0 3 12a9 9 0 0 0 18 0c0-2.74-1.23-5.18-3.17-6.83z" />
+            </svg>
+          </button>
           <Clock />
         </div>
       </header>
@@ -343,11 +388,26 @@ export default function App() {
       </section>
       <div className="grid">
         <HealthCard me={me} />
-        <PlayerList me={me} players={players} silent={silentAt !== null} onToggleSilent={toggleSilent} talking="VIPER" />
-        <TacticalNavModule />
+        <PlayerList me={me} players={players} vis={settings.rosterVis} silent={silentAt !== null} onToggleSilent={toggleSilent} talking="VIPER" />
+        {settings.mapVis === "none" ? (
+          <section className="panel panel-map map-off">
+            <div className="panel-hd">
+              <div className="lbl">Tactical Map</div>
+              <div className="mini-tag mono">OFFLINE</div>
+            </div>
+            <div className="map-off-body mono">
+              <b>SIGNAL JAMMED</b>
+              <span>MAP DISABLED BY COMMAND</span>
+            </div>
+          </section>
+        ) : (
+          <TacticalNavModule />
+        )}
         <ObjectiveCode onFire={fire} />
         <Chat me={me.n} chat={chat} onSend={send} silentAt={silentAt} />
       </div>
     </div>
+    {logoutModal}
+    </>
   );
 }

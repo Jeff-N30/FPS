@@ -28,7 +28,7 @@ export default function RadioControls({ channel }: Props) {
   // Desktop: hold SPACE to talk (ignored while typing in a field).
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.repeat || isTyping(e.target)) return;
+      if (e.code !== "Space" || e.repeat || isTyping(e.target) || document.querySelector(".confirm-bg")) return;
       e.preventDefault();
       setTx(true);
     };
